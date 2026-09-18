@@ -6,7 +6,14 @@
 const STORAGE_KEY = 'noir_notes_workspace_v5';
 
 const StorageManager = {
-  getDefaultState() {
+  getStorageKey(username) {
+    if (username && typeof username === 'string' && username.trim()) {
+      return 'noir_workspace_user_' + username.trim();
+    }
+    return STORAGE_KEY;
+  },
+
+  getDefaultState(username) {
     const mainPageId = 'page_main';
     const subPageId1 = 'page_sub_1';
     const subPageId2 = 'page_sub_2';
@@ -20,7 +27,7 @@ const StorageManager = {
           id: mainPageId,
           isMain: true,
           parentId: null,
-          title: 'Workspace',
+          title: username ? `${username}'s Workspace` : 'Workspace',
           updatedAt: Date.now(),
           cells: []
         },
@@ -112,50 +119,63 @@ const StorageManager = {
     };
   },
 
-  loadData() {
+  loadData(username = null) {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const key = this.getStorageKey(username);
+      let raw = localStorage.getItem(key);
+
+      // Seamless migration of pre-auth workspace to first authenticated account
+      if (!raw && username) {
+        const legacy = localStorage.getItem(STORAGE_KEY);
+        if (legacy) {
+          raw = legacy;
+          localStorage.setItem(key, raw);
+        }
+      }
+
       if (!raw) {
-        const defaultState = this.getDefaultState();
-        this.saveData(defaultState);
+        const defaultState = this.getDefaultState(username);
+        this.saveData(defaultState, username);
         return defaultState;
       }
       const parsed = JSON.parse(raw);
       if (!parsed.pages || !parsed.pages.length) {
-        return this.getDefaultState();
+        return this.getDefaultState(username);
       }
       return parsed;
     } catch (e) {
       console.error('Failed to load from localStorage:', e);
-      return this.getDefaultState();
+      return this.getDefaultState(username);
     }
   },
 
-  saveData(state) {
+  saveData(state, username = null) {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      const key = this.getStorageKey(username);
+      localStorage.setItem(key, JSON.stringify(state));
     } catch (e) {
       console.error('Failed to save to localStorage:', e);
     }
   },
 
-  exportAsJSON(state) {
+  exportAsJSON(state, username = null) {
     const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const downloadAnchor = document.createElement('a');
     downloadAnchor.href = url;
-    downloadAnchor.download = `noir_notes_backup_${new Date().toISOString().slice(0, 10)}.json`;
+    const prefix = username ? `noir_${username}` : 'noir_notes';
+    downloadAnchor.download = `${prefix}_backup_${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
     downloadAnchor.remove();
     URL.revokeObjectURL(url);
   },
 
-  importFromJSON(jsonText) {
+  importFromJSON(jsonText, username = null) {
     try {
       const parsed = JSON.parse(jsonText);
       if (parsed && Array.isArray(parsed.pages)) {
-        this.saveData(parsed);
+        this.saveData(parsed, username);
         return parsed;
       }
       throw new Error('Invalid data format.');

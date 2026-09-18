@@ -8,8 +8,63 @@
 </head>
 <body>
   <div class="app-container">
+    <!-- AUTHENTICATION VIEW (Visible when not logged in) -->
+    <div class="auth-wrapper" id="auth-view" style="display: none;">
+      <div class="auth-card">
+        <div class="auth-header">
+          <div class="auth-brand-badge">NOIR WORKSPACE</div>
+          <h1 class="auth-title" id="auth-main-title">Sign In</h1>
+          <p class="auth-subtitle" id="auth-main-subtitle">Access your private minimalist notes</p>
+        </div>
+
+        <!-- Auth Tabs -->
+        <div class="auth-tabs">
+          <button type="button" class="auth-tab-btn active" id="tab-login">Sign In</button>
+          <button type="button" class="auth-tab-btn" id="tab-signup">Sign Up</button>
+        </div>
+
+        <!-- Feedback / Error Banner -->
+        <div class="auth-alert" id="auth-alert" style="display: none;"></div>
+
+        <!-- Sign In Form -->
+        <form class="auth-form" id="form-login">
+          <div class="auth-field">
+            <label class="auth-label" for="login-username">Username</label>
+            <input type="text" id="login-username" class="auth-input" placeholder="Enter username" autocomplete="username" required>
+          </div>
+          <div class="auth-field">
+            <label class="auth-label" for="login-password">Password</label>
+            <input type="password" id="login-password" class="auth-input" placeholder="Enter password" autocomplete="current-password" required>
+          </div>
+          <button type="submit" class="auth-submit-btn" id="btn-login-submit">Sign In</button>
+        </form>
+
+        <!-- Sign Up Form -->
+        <form class="auth-form" id="form-signup" style="display: none;">
+          <div class="auth-field">
+            <label class="auth-label" for="signup-username">Username</label>
+            <input type="text" id="signup-username" class="auth-input" placeholder="Choose a username (letters, numbers)" autocomplete="username" required>
+          </div>
+          <div class="auth-field">
+            <label class="auth-label" for="signup-password">Password</label>
+            <input type="password" id="signup-password" class="auth-input" placeholder="Create a password (min. 4 chars)" autocomplete="new-password" required>
+          </div>
+          <div class="auth-field">
+            <label class="auth-label" for="signup-confirm">Confirm Password</label>
+            <input type="password" id="signup-confirm" class="auth-input" placeholder="Confirm your password" autocomplete="new-password" required>
+          </div>
+          <button type="submit" class="auth-submit-btn" id="btn-signup-submit">Create Account</button>
+        </form>
+
+        <div class="auth-footer-hint">
+          <span id="auth-switch-prompt">Don't have an account?</span>
+          <button type="button" class="auth-switch-link" id="link-switch-auth">Sign up</button>
+        </div>
+      </div>
+    </div>
+
     <!-- MAIN SCROLLABLE WRAPPER -->
-    <main class="editor-scroll-container">
+    <main class="editor-scroll-container" id="editor-view">
       <div class="editor-center-column">
 
         <!-- 1. BACK NAVIGATION (Only in child page) -->
@@ -71,14 +126,16 @@
           </div>
         </div>
 
-        <!-- 5. FOOTER MENU (MD EXPORT, BACKUP, RESTORE) -->
+        <!-- 5. FOOTER MENU (MD EXPORT, BACKUP, RESTORE, SIGN OUT) -->
         <div class="footer-hover-zone">
           <footer class="page-bottom-footer">
             <div class="footer-left-info" id="footer-page-info">Noir Note</div>
             <div class="footer-actions">
+              <span class="footer-user-tag" id="footer-user-name"></span>
               <button class="btn-footer" id="btn-export-md" title="Download current page as Markdown">Export MD</button>
               <button class="btn-footer" id="btn-backup-json" title="Backup all data to JSON">Backup</button>
               <button class="btn-footer" id="btn-restore-json-trigger" title="Restore data from JSON">Restore</button>
+              <button class="btn-footer btn-footer-signout" id="btn-sign-out" title="Sign out of account">Sign Out</button>
             </div>
           </footer>
         </div>
@@ -125,6 +182,7 @@
   <div class="toast-container" id="toast-container"></div>
 
   <!-- SCRIPTS -->
+  <script src="js/auth.js"></script>
   <script src="js/markdown.js"></script>
   <script src="js/storage.js"></script>
   <script src="js/cells.js"></script>

@@ -4,10 +4,31 @@
  */
 
 document.addEventListener('DOMContentLoaded', () => {
-  // Application State
-  let state = StorageManager.loadData();
+  // Application & Session State
+  let currentUser = null;
+  let state = null;
   let saveTimeout = null;
   let insertTargetIndex = null;
+
+  // Auth DOM Elements
+  const authView = document.getElementById('auth-view');
+  const editorView = document.getElementById('editor-view');
+  const authMainTitle = document.getElementById('auth-main-title');
+  const authMainSubtitle = document.getElementById('auth-main-subtitle');
+  const tabLogin = document.getElementById('tab-login');
+  const tabSignup = document.getElementById('tab-signup');
+  const authAlert = document.getElementById('auth-alert');
+  const formLogin = document.getElementById('form-login');
+  const formSignup = document.getElementById('form-signup');
+  const loginUsername = document.getElementById('login-username');
+  const loginPassword = document.getElementById('login-password');
+  const signupUsername = document.getElementById('signup-username');
+  const signupPassword = document.getElementById('signup-password');
+  const signupConfirm = document.getElementById('signup-confirm');
+  const authSwitchPrompt = document.getElementById('auth-switch-prompt');
+  const linkSwitchAuth = document.getElementById('link-switch-auth');
+  const footerUserName = document.getElementById('footer-user-name');
+  const btnSignOut = document.getElementById('btn-sign-out');
 
   // DOM Elements
   const navBackContainer = document.getElementById('nav-back-container');
@@ -37,6 +58,45 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnCloseInsertModal = document.getElementById('btn-close-insert-modal');
   const toastContainer = document.getElementById('toast-container');
 
+  // Auth UI Helpers
+  function setAuthMode(mode) {
+    hideAuthAlert();
+    if (mode === 'login') {
+      tabLogin.classList.add('active');
+      tabSignup.classList.remove('active');
+      formLogin.style.display = 'flex';
+      formSignup.style.display = 'none';
+      authMainTitle.textContent = 'Sign In';
+      authMainSubtitle.textContent = 'Access your private minimalist notes';
+      authSwitchPrompt.textContent = "Don't have an account?";
+      linkSwitchAuth.textContent = 'Sign up';
+      setTimeout(() => loginUsername && loginUsername.focus(), 50);
+    } else {
+      tabSignup.classList.add('active');
+      tabLogin.classList.remove('active');
+      formSignup.style.display = 'flex';
+      formLogin.style.display = 'none';
+      authMainTitle.textContent = 'Create Account';
+      authMainSubtitle.textContent = 'Start with your personal isolated workspace';
+      authSwitchPrompt.textContent = 'Already have an account?';
+      linkSwitchAuth.textContent = 'Sign in';
+      setTimeout(() => signupUsername && signupUsername.focus(), 50);
+    }
+  }
+
+  function showAuthAlert(message, isSuccess = false) {
+    if (!authAlert) return;
+    authAlert.textContent = message;
+    authAlert.className = isSuccess ? 'auth-alert success' : 'auth-alert';
+    authAlert.style.display = 'block';
+  }
+
+  function hideAuthAlert() {
+    if (!authAlert) return;
+    authAlert.style.display = 'none';
+    authAlert.textContent = '';
+  }
+
   // Toast Notification
   function showToast(message) {
     if (!toastContainer) return;
@@ -52,24 +112,26 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 1800);
   }
 
-  // Auto-Save (Debounced)
+  // Auto-Save (Debounced & User-specific)
   function triggerSave(immediate = false) {
+    if (!currentUser || !state) return;
     if (saveTimeout) clearTimeout(saveTimeout);
     if (immediate) {
       const curPage = getCurrentPage();
       if (curPage) curPage.updatedAt = Date.now();
-      StorageManager.saveData(state);
+      StorageManager.saveData(state, currentUser);
     } else {
       saveTimeout = setTimeout(() => {
         const curPage = getCurrentPage();
         if (curPage) curPage.updatedAt = Date.now();
-        StorageManager.saveData(state);
+        StorageManager.saveData(state, currentUser);
       }, 350);
     }
   }
 
   // Current active page
   function getCurrentPage() {
+    if (!state || !Array.isArray(state.pages)) return null;
     let page = state.pages.find(p => p.id === state.activePageId);
     if (!page && state.pages.length > 0) {
       page = PageManager.getMainPage(state.pages);
@@ -481,7 +543,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // Backup JSON
   if (btnBackupJson) {
     btnBackupJson.addEventListener('click', () => {
-      StorageManager.exportAsJSON(state);
+      if (!state) return;
+      StorageManager.exportAsJSON(state, currentUser);
       showToast('Backup saved');
     });
   }
@@ -498,7 +561,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
       const reader = new FileReader();
       reader.onload = (event) => {
-        const imported = StorageManager.importFromJSON(event.target.result);
+        const imported = StorageManager.importFromJSON(event.target.result, currentUser);
         if (imported) {
           state = imported;
           renderCurrentPage();
@@ -510,8 +573,92 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // Sign Out Action
+  if (btnSignOut) {
+    btnSignOut.addEventListener('click', () => {
+      const confirmed = confirm(`Sign out of account "${currentUser}"?`);
+      if (!confirmed) return;
+
+      if (saveTimeout) {
+        clearTimeout(saveTimeout);
+        if (state && currentUser) {
+          StorageManager.saveData(state, currentUser);
+        }
+      }
+
+      AuthManager.logout();
+      currentUser = null;
+      state = null;
+
+      try {
+        history.replaceState(null, '', window.location.pathname + window.location.search);
+      } catch (e) {}
+
+      initSession();
+      showToast('Signed out');
+    });
+  }
+
+  // Auth Tab Switchers
+  if (tabLogin) {
+    tabLogin.addEventListener('click', () => setAuthMode('login'));
+  }
+  if (tabSignup) {
+    tabSignup.addEventListener('click', () => setAuthMode('signup'));
+  }
+  if (linkSwitchAuth) {
+    linkSwitchAuth.addEventListener('click', (e) => {
+      e.preventDefault();
+      const isCurrentlyLogin = tabLogin.classList.contains('active');
+      setAuthMode(isCurrentlyLogin ? 'signup' : 'login');
+    });
+  }
+
+  // Login Form Submission
+  if (formLogin) {
+    formLogin.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      hideAuthAlert();
+
+      const username = loginUsername ? loginUsername.value.trim() : '';
+      const password = loginPassword ? loginPassword.value : '';
+
+      const res = await AuthManager.login(username, password);
+      if (res.success) {
+        if (loginPassword) loginPassword.value = '';
+        initSession();
+        showToast(`Welcome back, ${res.user}!`);
+      } else {
+        showAuthAlert(res.error || 'Failed to sign in.');
+      }
+    });
+  }
+
+  // Signup Form Submission
+  if (formSignup) {
+    formSignup.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      hideAuthAlert();
+
+      const username = signupUsername ? signupUsername.value.trim() : '';
+      const password = signupPassword ? signupPassword.value : '';
+      const confirmPassword = signupConfirm ? signupConfirm.value : '';
+
+      const res = await AuthManager.signup(username, password, confirmPassword);
+      if (res.success) {
+        if (signupPassword) signupPassword.value = '';
+        if (signupConfirm) signupConfirm.value = '';
+        initSession();
+        showToast(`Account created! Welcome, ${res.user}`);
+      } else {
+        showAuthAlert(res.error || 'Failed to create account.');
+      }
+    });
+  }
+
   // Browser Back / Forward History Navigation
   window.addEventListener('popstate', (e) => {
+    if (!currentUser || !state || !Array.isArray(state.pages)) return;
     let targetId = e.state ? e.state.pageId : null;
     if (!targetId) {
       const hash = window.location.hash.replace(/^#/, '');
@@ -529,6 +676,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   window.addEventListener('hashchange', () => {
+    if (!currentUser || !state || !Array.isArray(state.pages)) return;
     const hash = window.location.hash.replace(/^#/, '');
     const currentTarget = hash || PageManager.getMainPage(state.pages)?.id;
     if (currentTarget && currentTarget !== state.activePageId && state.pages.some(p => p.id === currentTarget)) {
@@ -543,21 +691,48 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Initial Boot & Hash Deep-Linking
-  const initialHash = window.location.hash.replace(/^#/, '');
-  if (initialHash && state.pages.some(p => p.id === initialHash)) {
-    state.activePageId = initialHash;
-  } else {
-    const cur = getCurrentPage();
-    state.activePageId = cur ? cur.id : null;
+  // Initialize Session / View Routing
+  function initSession() {
+    currentUser = AuthManager.getCurrentUser();
+
+    if (!currentUser) {
+      if (authView) authView.style.display = 'flex';
+      if (editorView) editorView.style.display = 'none';
+      if (loginUsername) loginUsername.value = '';
+      if (loginPassword) loginPassword.value = '';
+      if (signupUsername) signupUsername.value = '';
+      if (signupPassword) signupPassword.value = '';
+      if (signupConfirm) signupConfirm.value = '';
+      setAuthMode('login');
+      return;
+    }
+
+    // Authenticated User
+    if (authView) authView.style.display = 'none';
+    if (editorView) editorView.style.display = 'flex';
+    if (footerUserName) footerUserName.textContent = currentUser;
+
+    state = StorageManager.loadData(currentUser);
+
+    // Initial Boot & Hash Deep-Linking for active account
+    const initialHash = window.location.hash.replace(/^#/, '');
+    if (initialHash && state.pages.some(p => p.id === initialHash)) {
+      state.activePageId = initialHash;
+    } else {
+      const cur = getCurrentPage();
+      state.activePageId = cur ? cur.id : null;
+    }
+
+    const activePage = getCurrentPage();
+    const initialTargetHash = activePage && activePage.isMain ? '' : '#' + (activePage ? activePage.id : '');
+    const initialUrl = window.location.pathname + window.location.search + initialTargetHash;
+    try {
+      history.replaceState({ pageId: state.activePageId }, '', initialUrl);
+    } catch (e) {}
+
+    renderCurrentPage();
   }
 
-  const activePage = getCurrentPage();
-  const initialTargetHash = activePage && activePage.isMain ? '' : '#' + (activePage ? activePage.id : '');
-  const initialUrl = window.location.pathname + window.location.search + initialTargetHash;
-  try {
-    history.replaceState({ pageId: state.activePageId }, '', initialUrl);
-  } catch (e) {}
-
-  renderCurrentPage();
+  // App Startup
+  initSession();
 });
