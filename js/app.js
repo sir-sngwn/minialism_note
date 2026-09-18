@@ -85,12 +85,26 @@ document.addEventListener('DOMContentLoaded', () => {
     pageTitleInput.style.height = pageTitleInput.scrollHeight + 'px';
   }
 
-  // Smooth Navigation between Pages
-  function navigateToPage(pageId) {
+  // Smooth Navigation between Pages with Browser History Integration
+  function navigateToPage(pageId, pushHistory = true) {
     const target = state.pages.find(p => p.id === pageId);
     if (!target) return;
     state.activePageId = pageId;
     triggerSave(true);
+
+    if (pushHistory) {
+      const isMain = !!target.isMain;
+      const targetHash = isMain ? '' : '#' + pageId;
+      const newUrl = window.location.pathname + window.location.search + targetHash;
+      if (window.location.hash !== targetHash) {
+        try {
+          history.pushState({ pageId }, '', newUrl);
+        } catch (e) {
+          window.location.hash = targetHash;
+        }
+      }
+    }
+
     renderCurrentPage();
 
     const scrollContainer = document.querySelector('.editor-scroll-container');
@@ -496,6 +510,32 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   }
 
+  // Browser Back / Forward History Navigation
+  window.addEventListener('popstate', (e) => {
+    let targetId = e.state ? e.state.pageId : null;
+    if (!targetId) {
+      const hash = window.location.hash.replace(/^#/, '');
+      if (hash && state.pages.some(p => p.id === hash)) {
+        targetId = hash;
+      } else {
+        const main = PageManager.getMainPage(state.pages);
+        targetId = main ? main.id : null;
+      }
+    }
+
+    if (targetId && targetId !== state.activePageId && state.pages.some(p => p.id === targetId)) {
+      navigateToPage(targetId, false);
+    }
+  });
+
+  window.addEventListener('hashchange', () => {
+    const hash = window.location.hash.replace(/^#/, '');
+    const currentTarget = hash || PageManager.getMainPage(state.pages)?.id;
+    if (currentTarget && currentTarget !== state.activePageId && state.pages.some(p => p.id === currentTarget)) {
+      navigateToPage(currentTarget, false);
+    }
+  });
+
   // Global Keyboard Shortcuts
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
@@ -503,6 +543,21 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Initial Boot
+  // Initial Boot & Hash Deep-Linking
+  const initialHash = window.location.hash.replace(/^#/, '');
+  if (initialHash && state.pages.some(p => p.id === initialHash)) {
+    state.activePageId = initialHash;
+  } else {
+    const cur = getCurrentPage();
+    state.activePageId = cur ? cur.id : null;
+  }
+
+  const activePage = getCurrentPage();
+  const initialTargetHash = activePage && activePage.isMain ? '' : '#' + (activePage ? activePage.id : '');
+  const initialUrl = window.location.pathname + window.location.search + initialTargetHash;
+  try {
+    history.replaceState({ pageId: state.activePageId }, '', initialUrl);
+  } catch (e) {}
+
   renderCurrentPage();
 });
