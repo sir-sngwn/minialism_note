@@ -69,3 +69,4 @@ CREATE TRIGGER set_notes_updated_at
 BEFORE UPDATE ON public.notes
 FOR EACH ROW
 EXECUTE FUNCTION public.handle_updated_at();
+
