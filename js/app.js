@@ -20,14 +20,15 @@ document.addEventListener('DOMContentLoaded', () => {
   const authAlert = document.getElementById('auth-alert');
   const formLogin = document.getElementById('form-login');
   const formSignup = document.getElementById('form-signup');
-  const loginUsername = document.getElementById('login-username');
+  const loginEmail = document.getElementById('login-email');
   const loginPassword = document.getElementById('login-password');
-  const signupUsername = document.getElementById('signup-username');
+  const signupEmail = document.getElementById('signup-email');
   const signupPassword = document.getElementById('signup-password');
   const signupConfirm = document.getElementById('signup-confirm');
   const authSwitchPrompt = document.getElementById('auth-switch-prompt');
   const linkSwitchAuth = document.getElementById('link-switch-auth');
   const footerUserName = document.getElementById('footer-user-name');
+  const footerSyncTag = document.getElementById('footer-sync-tag');
   const btnSignOut = document.getElementById('btn-sign-out');
 
   // DOM Elements
@@ -58,6 +59,13 @@ document.addEventListener('DOMContentLoaded', () => {
   const btnCloseInsertModal = document.getElementById('btn-close-insert-modal');
   const toastContainer = document.getElementById('toast-container');
 
+  // Sync Status Badge Helper
+  function updateSyncStatus(status, text) {
+    if (!footerSyncTag) return;
+    footerSyncTag.className = 'footer-sync-tag ' + status;
+    footerSyncTag.textContent = text;
+  }
+
   // Auth UI Helpers
   function setAuthMode(mode) {
     hideAuthAlert();
@@ -70,17 +78,17 @@ document.addEventListener('DOMContentLoaded', () => {
       authMainSubtitle.textContent = 'Access your private minimalist notes';
       authSwitchPrompt.textContent = "Don't have an account?";
       linkSwitchAuth.textContent = 'Sign up';
-      setTimeout(() => loginUsername && loginUsername.focus(), 50);
+      setTimeout(() => loginEmail && loginEmail.focus(), 50);
     } else {
       tabSignup.classList.add('active');
       tabLogin.classList.remove('active');
       formSignup.style.display = 'flex';
       formLogin.style.display = 'none';
       authMainTitle.textContent = 'Create Account';
-      authMainSubtitle.textContent = 'Start with your personal isolated workspace';
+      authMainSubtitle.textContent = 'Start with your personal cloud workspace';
       authSwitchPrompt.textContent = 'Already have an account?';
       linkSwitchAuth.textContent = 'Sign in';
-      setTimeout(() => signupUsername && signupUsername.focus(), 50);
+      setTimeout(() => signupEmail && signupEmail.focus(), 50);
     }
   }
 
@@ -112,20 +120,42 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 1800);
   }
 
-  // Auto-Save (Debounced & User-specific)
+  // Auto-Save (Debounced & Cloud-synced)
   function triggerSave(immediate = false) {
     if (!currentUser || !state) return;
     if (saveTimeout) clearTimeout(saveTimeout);
+
+    const curPage = getCurrentPage();
+    if (curPage) curPage.updatedAt = Date.now();
+    StorageManager.saveToLocalCache(state, currentUser.id);
+
     if (immediate) {
-      const curPage = getCurrentPage();
-      if (curPage) curPage.updatedAt = Date.now();
-      StorageManager.saveData(state, currentUser);
+      saveToCloud(curPage);
     } else {
+      updateSyncStatus('saving', 'Saving...');
       saveTimeout = setTimeout(() => {
-        const curPage = getCurrentPage();
-        if (curPage) curPage.updatedAt = Date.now();
-        StorageManager.saveData(state, currentUser);
-      }, 350);
+        saveToCloud(curPage);
+      }, 400);
+    }
+  }
+
+  async function saveToCloud(curPage) {
+    if (!currentUser || !curPage) return;
+    if (!AuthManager.isConfigured()) {
+      updateSyncStatus('unconfigured', 'Local Mode');
+      return;
+    }
+    try {
+      updateSyncStatus('saving', 'Saving...');
+      const ok = await StorageManager.saveNote(curPage, currentUser.id);
+      if (ok) {
+        updateSyncStatus('synced', 'Cloud Synced');
+      } else {
+        updateSyncStatus('offline', 'Saved Locally');
+      }
+    } catch (e) {
+      console.error('Cloud save failed:', e);
+      updateSyncStatus('offline', 'Saved Locally');
     }
   }
 
@@ -219,13 +249,16 @@ document.addEventListener('DOMContentLoaded', () => {
       // Delete subpage button
       const delBtn = card.querySelector('.main-card-del-btn');
       if (delBtn) {
-        delBtn.onclick = (e) => {
+        delBtn.onclick = async (e) => {
           e.stopPropagation();
           const confirmed = confirm(`Delete "${sub.title || 'Untitled'}"?`);
           if (confirmed) {
-            const { remainingPages } = PageManager.deletePageAndDescendants(state.pages, sub.id);
+            const { remainingPages, deletedIds } = PageManager.deletePageAndDescendants(state.pages, sub.id);
             state.pages = remainingPages;
             triggerSave(true);
+            if (currentUser && AuthManager.isConfigured() && deletedIds && deletedIds.length) {
+              await StorageManager.deleteNotes(deletedIds, currentUser.id);
+            }
             renderCurrentPage();
             showToast('Page deleted');
           }
@@ -344,11 +377,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Add Page from Main Page
   if (btnAddMainSubpage) {
-    btnAddMainSubpage.addEventListener('click', () => {
+    btnAddMainSubpage.addEventListener('click', async () => {
       const main = PageManager.getMainPage(state.pages);
       const newSub = PageManager.createNewPage(main.id, 'Untitled');
       state.pages.push(newSub);
       triggerSave(true);
+      if (currentUser && AuthManager.isConfigured()) {
+        await StorageManager.saveNote(newSub, currentUser.id);
+      }
       navigateToPage(newSub.id);
       if (pageTitleInput) {
         pageTitleInput.focus();
@@ -407,8 +443,11 @@ document.addEventListener('DOMContentLoaded', () => {
     if (targetCell && targetCell.type === 'subpage') {
       const confirmed = confirm('Delete this nested page and all its contents?');
       if (!confirmed) return;
-      const { remainingPages } = PageManager.deletePageAndDescendants(state.pages, targetCell.subpageId);
+      const { remainingPages, deletedIds } = PageManager.deletePageAndDescendants(state.pages, targetCell.subpageId);
       state.pages = remainingPages;
+      if (currentUser && AuthManager.isConfigured() && deletedIds && deletedIds.length) {
+        StorageManager.deleteNotes(deletedIds, currentUser.id);
+      }
     }
 
     page.cells = page.cells.filter(c => c.id !== cellId);
@@ -544,7 +583,7 @@ document.addEventListener('DOMContentLoaded', () => {
   if (btnBackupJson) {
     btnBackupJson.addEventListener('click', () => {
       if (!state) return;
-      StorageManager.exportAsJSON(state, currentUser);
+      StorageManager.exportAsJSON(state, currentUser ? currentUser.email : null);
       showToast('Backup saved');
     });
   }
@@ -555,13 +594,13 @@ document.addEventListener('DOMContentLoaded', () => {
       inputRestoreFile.click();
     });
 
-    inputRestoreFile.addEventListener('change', (e) => {
+    inputRestoreFile.addEventListener('change', async (e) => {
       const file = e.target.files[0];
       if (!file) return;
 
       const reader = new FileReader();
-      reader.onload = (event) => {
-        const imported = StorageManager.importFromJSON(event.target.result, currentUser);
+      reader.onload = async (event) => {
+        const imported = await StorageManager.importFromJSON(event.target.result, currentUser);
         if (imported) {
           state = imported;
           renderCurrentPage();
@@ -575,18 +614,20 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Sign Out Action
   if (btnSignOut) {
-    btnSignOut.addEventListener('click', () => {
-      const confirmed = confirm(`Sign out of account "${currentUser}"?`);
+    btnSignOut.addEventListener('click', async () => {
+      const email = currentUser ? (currentUser.email || 'your account') : 'your account';
+      const confirmed = confirm(`Sign out of ${email}?`);
       if (!confirmed) return;
 
       if (saveTimeout) {
         clearTimeout(saveTimeout);
         if (state && currentUser) {
-          StorageManager.saveData(state, currentUser);
+          const cur = getCurrentPage();
+          if (cur) await StorageManager.saveNote(cur, currentUser.id);
         }
       }
 
-      AuthManager.logout();
+      await AuthManager.logout();
       currentUser = null;
       state = null;
 
@@ -594,7 +635,7 @@ document.addEventListener('DOMContentLoaded', () => {
         history.replaceState(null, '', window.location.pathname + window.location.search);
       } catch (e) {}
 
-      initSession();
+      await initSession();
       showToast('Signed out');
     });
   }
@@ -620,14 +661,26 @@ document.addEventListener('DOMContentLoaded', () => {
       e.preventDefault();
       hideAuthAlert();
 
-      const username = loginUsername ? loginUsername.value.trim() : '';
+      const email = loginEmail ? loginEmail.value.trim() : '';
       const password = loginPassword ? loginPassword.value : '';
 
-      const res = await AuthManager.login(username, password);
+      const submitBtn = document.getElementById('btn-login-submit');
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Signing in...';
+      }
+
+      const res = await AuthManager.login(email, password);
+
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Sign In';
+      }
+
       if (res.success) {
         if (loginPassword) loginPassword.value = '';
-        initSession();
-        showToast(`Welcome back, ${res.user}!`);
+        await initSession();
+        showToast('Welcome back!');
       } else {
         showAuthAlert(res.error || 'Failed to sign in.');
       }
@@ -640,16 +693,33 @@ document.addEventListener('DOMContentLoaded', () => {
       e.preventDefault();
       hideAuthAlert();
 
-      const username = signupUsername ? signupUsername.value.trim() : '';
+      const email = signupEmail ? signupEmail.value.trim() : '';
       const password = signupPassword ? signupPassword.value : '';
       const confirmPassword = signupConfirm ? signupConfirm.value : '';
 
-      const res = await AuthManager.signup(username, password, confirmPassword);
+      const submitBtn = document.getElementById('btn-signup-submit');
+      if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.textContent = 'Creating account...';
+      }
+
+      const res = await AuthManager.signup(email, password, confirmPassword);
+
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Create Account';
+      }
+
       if (res.success) {
         if (signupPassword) signupPassword.value = '';
         if (signupConfirm) signupConfirm.value = '';
-        initSession();
-        showToast(`Account created! Welcome, ${res.user}`);
+
+        if (res.pendingConfirmation) {
+          showAuthAlert(res.message, true);
+        } else {
+          await initSession();
+          showToast('Account created! Welcome to Noir Note.');
+        }
       } else {
         showAuthAlert(res.error || 'Failed to create account.');
       }
@@ -692,27 +762,37 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // Initialize Session / View Routing
-  function initSession() {
-    currentUser = AuthManager.getCurrentUser();
+  async function initSession() {
+    currentUser = await AuthManager.getCurrentUser();
 
     if (!currentUser) {
       if (authView) authView.style.display = 'flex';
       if (editorView) editorView.style.display = 'none';
-      if (loginUsername) loginUsername.value = '';
+      if (loginEmail) loginEmail.value = '';
       if (loginPassword) loginPassword.value = '';
-      if (signupUsername) signupUsername.value = '';
+      if (signupEmail) signupEmail.value = '';
       if (signupPassword) signupPassword.value = '';
       if (signupConfirm) signupConfirm.value = '';
       setAuthMode('login');
+
+      if (!AuthManager.isConfigured() && authMainSubtitle) {
+        authMainSubtitle.innerHTML = 'Access your private minimalist notes<br><span style="color:#d8cf8c;font-size:10pt;opacity:0.85;">⚠️ Add Supabase credentials in .env.local to enable cloud sync</span>';
+      }
       return;
     }
 
     // Authenticated User
     if (authView) authView.style.display = 'none';
     if (editorView) editorView.style.display = 'flex';
-    if (footerUserName) footerUserName.textContent = currentUser;
+    if (footerUserName) footerUserName.textContent = currentUser.email || 'User';
 
-    state = StorageManager.loadData(currentUser);
+    if (AuthManager.isConfigured()) {
+      updateSyncStatus('synced', 'Cloud Synced');
+    } else {
+      updateSyncStatus('unconfigured', 'Local Mode');
+    }
+
+    state = await StorageManager.loadData(currentUser);
 
     // Initial Boot & Hash Deep-Linking for active account
     const initialHash = window.location.hash.replace(/^#/, '');
@@ -732,6 +812,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
     renderCurrentPage();
   }
+
+  // Subscribe to auth state change events
+  AuthManager.onAuthStateChange(async (event, session) => {
+    if (event === 'SIGNED_IN' && (!currentUser || currentUser.id !== session?.user?.id)) {
+      await initSession();
+    } else if (event === 'SIGNED_OUT' && currentUser) {
+      currentUser = null;
+      state = null;
+      await initSession();
+    }
+  });
 
   // App Startup
   initSession();

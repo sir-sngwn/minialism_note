@@ -79,7 +79,7 @@ const PageManager = {
       }
     });
 
-    return { remainingPages: remaining, deletedCount: toDelete.size };
+    return { remainingPages: remaining, deletedCount: toDelete.size, deletedIds: Array.from(toDelete) };
   }
 };
 

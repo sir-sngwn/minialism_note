@@ -1,0 +1,22 @@
+{
+  "name": "minialism-note",
+  "version": "1.0.0",
+  "description": "Noir Workspace — Minimalist Thought Organizer & Personal Notes",
+  "main": "index.html",
+  "scripts": {
+    "start": "npx serve .",
+    "test": "node -c js/*.js"
+  },
+  "keywords": [
+    "notes",
+    "minimalism",
+    "supabase",
+    "markdown",
+    "editor"
+  ],
+  "author": "sir-sngwn",
+  "license": "MIT",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.1"
+  }
+}

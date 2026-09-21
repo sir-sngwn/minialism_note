@@ -1,16 +1,17 @@
 /**
- * Local Storage & Data Management for Noir Note
- * Full English Edition
+ * Supabase Cloud Storage & Data Management for Noir Note
+ * Real-time CRUD with local cache fallback
  */
 
-const STORAGE_KEY = 'noir_notes_workspace_v5';
+const STORAGE_CACHE_PREFIX = 'noir_cache_user_';
 
 const StorageManager = {
-  getStorageKey(username) {
-    if (username && typeof username === 'string' && username.trim()) {
-      return 'noir_workspace_user_' + username.trim();
+  getClient() {
+    const svc = (typeof SupabaseService !== 'undefined') ? SupabaseService : (typeof global !== 'undefined' ? global.SupabaseService : null);
+    if (svc && svc.getClient) {
+      return svc.getClient();
     }
-    return STORAGE_KEY;
+    return null;
   },
 
   getDefaultState(username) {
@@ -27,7 +28,7 @@ const StorageManager = {
           id: mainPageId,
           isMain: true,
           parentId: null,
-          title: username ? `${username}'s Workspace` : 'Workspace',
+          title: username ? `${username.split('@')[0]}'s Workspace` : 'Workspace',
           updatedAt: Date.now(),
           cells: []
         },
@@ -70,7 +71,7 @@ const StorageManager = {
             }
           ]
         },
-        // 3. Subpage 2: System Architecture & Notes
+        // 3. Subpage 2: System Architecture & OS
         {
           id: subPageId2,
           parentId: mainPageId,
@@ -119,51 +120,240 @@ const StorageManager = {
     };
   },
 
-  loadData(username = null) {
+  // Local cache management
+  saveToLocalCache(state, userKey) {
+    if (!userKey || !state) return;
     try {
-      const key = this.getStorageKey(username);
-      let raw = localStorage.getItem(key);
+      localStorage.setItem(STORAGE_CACHE_PREFIX + userKey, JSON.stringify(state));
+    } catch (e) {}
+  },
 
-      // Seamless migration of pre-auth workspace to first authenticated account
-      if (!raw && username) {
-        const legacy = localStorage.getItem(STORAGE_KEY);
-        if (legacy) {
-          raw = legacy;
-          localStorage.setItem(key, raw);
-        }
-      }
-
-      if (!raw) {
-        const defaultState = this.getDefaultState(username);
-        this.saveData(defaultState, username);
-        return defaultState;
-      }
-      const parsed = JSON.parse(raw);
-      if (!parsed.pages || !parsed.pages.length) {
-        return this.getDefaultState(username);
-      }
-      return parsed;
+  loadFromLocalCache(userKey) {
+    if (!userKey) return null;
+    try {
+      const raw = localStorage.getItem(STORAGE_CACHE_PREFIX + userKey);
+      return raw ? JSON.parse(raw) : null;
     } catch (e) {
-      console.error('Failed to load from localStorage:', e);
-      return this.getDefaultState(username);
+      return null;
     }
   },
 
-  saveData(state, username = null) {
+  /**
+   * Loads notes from Supabase database for the given user.
+   * If the user is new (0 notes in DB), seeds initial default workspace into Supabase.
+   */
+  async loadData(user) {
+    const userId = user ? user.id : null;
+    const userEmail = user ? user.email : null;
+
+    if (!userId) {
+      return this.getDefaultState();
+    }
+
+    const client = this.getClient();
+    if (!client) {
+      // Offline or credentials not yet configured: fallback to local cache
+      const cached = this.loadFromLocalCache(userId);
+      return cached || this.getDefaultState(userEmail);
+    }
+
     try {
-      const key = this.getStorageKey(username);
-      localStorage.setItem(key, JSON.stringify(state));
-    } catch (e) {
-      console.error('Failed to save to localStorage:', e);
+      const { data, error } = await client
+        .from('notes')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: true });
+
+      if (error) {
+        console.error('Supabase loadData error:', error);
+        const cached = this.loadFromLocalCache(userId);
+        return cached || this.getDefaultState(userEmail);
+      }
+
+      // Existing user with notes
+      if (data && data.length > 0) {
+        const pages = data.map(row => ({
+          id: row.id,
+          title: row.title || 'Untitled',
+          parentId: row.parent_id || null,
+          isMain: !!row.is_main,
+          updatedAt: new Date(row.updated_at || Date.now()).getTime(),
+          cells: Array.isArray(row.cells) ? row.cells : []
+        }));
+
+        const mainPage = pages.find(p => p.isMain) || pages[0];
+        const state = {
+          activePageId: mainPage ? mainPage.id : null,
+          pages: pages
+        };
+
+        this.saveToLocalCache(state, userId);
+        return state;
+      }
+
+      // First-time user: seed default workspace to Supabase
+      const defaultState = this.getDefaultState(userEmail);
+      await this.initUserNotesInSupabase(userId, defaultState.pages);
+      this.saveToLocalCache(defaultState, userId);
+      return defaultState;
+    } catch (err) {
+      console.error('Supabase loadData exception:', err);
+      const cached = this.loadFromLocalCache(userId);
+      return cached || this.getDefaultState(userEmail);
     }
   },
 
-  exportAsJSON(state, username = null) {
+  /**
+   * Batch insert initial default pages for a newly registered user
+   */
+  async initUserNotesInSupabase(userId, pages) {
+    const client = this.getClient();
+    if (!client || !userId || !Array.isArray(pages)) return false;
+
+    try {
+      const rows = pages.map(p => ({
+        id: p.id,
+        user_id: userId,
+        title: p.title || 'Untitled',
+        parent_id: p.parentId || null,
+        is_main: !!p.isMain,
+        cells: p.cells || [],
+        updated_at: new Date().toISOString()
+      }));
+
+      const { error } = await client.from('notes').insert(rows);
+      if (error) {
+        console.error('Failed to seed default notes in Supabase:', error);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.error('Exception seeding notes in Supabase:', e);
+      return false;
+    }
+  },
+
+  /**
+   * Save / Upsert a single note in Supabase
+   */
+  async saveNote(note, userId) {
+    if (!note || !userId) return false;
+
+    const client = this.getClient();
+    if (!client) return false;
+
+    try {
+      const row = {
+        id: note.id,
+        user_id: userId,
+        title: note.title || 'Untitled',
+        parent_id: note.parentId || null,
+        is_main: !!note.isMain,
+        cells: note.cells || [],
+        updated_at: new Date().toISOString()
+      };
+
+      const { error } = await client.from('notes').upsert(row);
+      if (error) {
+        console.error('Failed to upsert note in Supabase:', error);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.error('Exception saving note in Supabase:', e);
+      return false;
+    }
+  },
+
+  /**
+   * Delete a single note from Supabase
+   */
+  async deleteNote(noteId, userId) {
+    if (!noteId || !userId) return false;
+    const client = this.getClient();
+    if (!client) return false;
+
+    try {
+      const { error } = await client
+        .from('notes')
+        .delete()
+        .eq('id', noteId)
+        .eq('user_id', userId);
+
+      if (error) {
+        console.error('Failed to delete note from Supabase:', error);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.error('Exception deleting note from Supabase:', e);
+      return false;
+    }
+  },
+
+  /**
+   * Delete multiple notes from Supabase (e.g. parent page and all descendants)
+   */
+  async deleteNotes(noteIds, userId) {
+    if (!noteIds || !noteIds.length || !userId) return false;
+    const client = this.getClient();
+    if (!client) return false;
+
+    try {
+      const { error } = await client
+        .from('notes')
+        .delete()
+        .in('id', noteIds)
+        .eq('user_id', userId);
+
+      if (error) {
+        console.error('Failed to delete notes in batch from Supabase:', error);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.error('Exception batch deleting notes from Supabase:', e);
+      return false;
+    }
+  },
+
+  /**
+   * Save all notes / full state to Supabase
+   */
+  async saveAllNotes(pages, userId) {
+    if (!pages || !pages.length || !userId) return false;
+    const client = this.getClient();
+    if (!client) return false;
+
+    try {
+      const rows = pages.map(p => ({
+        id: p.id,
+        user_id: userId,
+        title: p.title || 'Untitled',
+        parent_id: p.parentId || null,
+        is_main: !!p.isMain,
+        cells: p.cells || [],
+        updated_at: new Date().toISOString()
+      }));
+
+      const { error } = await client.from('notes').upsert(rows);
+      if (error) {
+        console.error('Failed to save all notes to Supabase:', error);
+        return false;
+      }
+      return true;
+    } catch (e) {
+      console.error('Exception saving all notes to Supabase:', e);
+      return false;
+    }
+  },
+
+  exportAsJSON(state, userEmail = null) {
     const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/json;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const downloadAnchor = document.createElement('a');
     downloadAnchor.href = url;
-    const prefix = username ? `noir_${username}` : 'noir_notes';
+    const prefix = userEmail ? `noir_${userEmail.split('@')[0]}` : 'noir_notes';
     downloadAnchor.download = `${prefix}_backup_${new Date().toISOString().slice(0, 10)}.json`;
     document.body.appendChild(downloadAnchor);
     downloadAnchor.click();
@@ -171,11 +361,14 @@ const StorageManager = {
     URL.revokeObjectURL(url);
   },
 
-  importFromJSON(jsonText, username = null) {
+  async importFromJSON(jsonText, user) {
     try {
       const parsed = JSON.parse(jsonText);
       if (parsed && Array.isArray(parsed.pages)) {
-        this.saveData(parsed, username);
+        if (user && user.id) {
+          await this.saveAllNotes(parsed.pages, user.id);
+          this.saveToLocalCache(parsed, user.id);
+        }
         return parsed;
       }
       throw new Error('Invalid data format.');
@@ -191,7 +384,9 @@ const StorageManager = {
 
     if (page.isMain) {
       md += `## Pages\n\n`;
-      const subpages = (typeof PageManager !== 'undefined') ? PageManager.getSubpages(allPages, page.id) : allPages.filter(p => p.parentId === page.id && !p.isMain);
+      const subpages = (typeof PageManager !== 'undefined')
+        ? PageManager.getSubpages(allPages, page.id)
+        : allPages.filter(p => p.parentId === page.id && !p.isMain);
       subpages.forEach(sub => {
         md += `- [${sub.title || 'Page'}](#)\n`;
       });
@@ -246,6 +441,9 @@ const StorageManager = {
   }
 };
 
+if (typeof window !== 'undefined') {
+  window.StorageManager = StorageManager;
+}
 if (typeof module !== 'undefined' && module.exports) {
   module.exports = StorageManager;
 }

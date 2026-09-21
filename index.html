@@ -29,8 +29,8 @@
         <!-- Sign In Form -->
         <form class="auth-form" id="form-login">
           <div class="auth-field">
-            <label class="auth-label" for="login-username">Username</label>
-            <input type="text" id="login-username" class="auth-input" placeholder="Enter username" autocomplete="username" required>
+            <label class="auth-label" for="login-email">Email</label>
+            <input type="email" id="login-email" class="auth-input" placeholder="name@example.com" autocomplete="email" required>
           </div>
           <div class="auth-field">
             <label class="auth-label" for="login-password">Password</label>
@@ -42,12 +42,12 @@
         <!-- Sign Up Form -->
         <form class="auth-form" id="form-signup" style="display: none;">
           <div class="auth-field">
-            <label class="auth-label" for="signup-username">Username</label>
-            <input type="text" id="signup-username" class="auth-input" placeholder="Choose a username (letters, numbers)" autocomplete="username" required>
+            <label class="auth-label" for="signup-email">Email</label>
+            <input type="email" id="signup-email" class="auth-input" placeholder="name@example.com" autocomplete="email" required>
           </div>
           <div class="auth-field">
             <label class="auth-label" for="signup-password">Password</label>
-            <input type="password" id="signup-password" class="auth-input" placeholder="Create a password (min. 4 chars)" autocomplete="new-password" required>
+            <input type="password" id="signup-password" class="auth-input" placeholder="Create password (min. 6 chars)" autocomplete="new-password" required>
           </div>
           <div class="auth-field">
             <label class="auth-label" for="signup-confirm">Confirm Password</label>
@@ -131,6 +131,7 @@
           <footer class="page-bottom-footer">
             <div class="footer-left-info" id="footer-page-info">Noir Note</div>
             <div class="footer-actions">
+              <span class="footer-sync-tag" id="footer-sync-tag" title="Cloud Database Connection Status">Cloud Synced</span>
               <span class="footer-user-tag" id="footer-user-name"></span>
               <button class="btn-footer" id="btn-export-md" title="Download current page as Markdown">Export MD</button>
               <button class="btn-footer" id="btn-backup-json" title="Backup all data to JSON">Backup</button>
@@ -182,6 +183,8 @@
   <div class="toast-container" id="toast-container"></div>
 
   <!-- SCRIPTS -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/supabase.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/markdown.js"></script>
   <script src="js/storage.js"></script>
